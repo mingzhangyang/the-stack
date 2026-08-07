@@ -4,27 +4,15 @@ import {fileURLToPath} from 'node:url';
 import {defineConfig, type Plugin} from 'vite';
 
 // Absolute URLs are required for canonical links, Open Graph images and the
-// sitemap — relative ones are ignored by crawlers and social scrapers. Set
-// SITE_URL at build time once the real domain is known:
-//
-//   SITE_URL=https://steadyhand.example.com npm run build
-//
-const DEFAULT_SITE_URL = 'https://the-stack.workers.dev';
+// sitemap — relative ones are ignored by crawlers and social scrapers. This is
+// the deployed origin (see the `routes` entry in wrangler.jsonc); override with
+// SITE_URL to build for a different one, e.g. a staging host.
+const DEFAULT_SITE_URL = 'https://steady-hand.orangely.xyz';
 const SITE_URL = (process.env.SITE_URL ?? DEFAULT_SITE_URL).replace(/\/+$/, '');
 
 function seoPlugin(): Plugin {
   return {
     name: 'the-stack:seo',
-
-    buildStart() {
-      if (!process.env.SITE_URL) {
-        this.warn(
-          `SITE_URL is not set — canonical and Open Graph URLs will point at the ` +
-            `placeholder ${DEFAULT_SITE_URL}. Set SITE_URL to the real origin before ` +
-            `deploying, or crawlers will index the wrong host.`,
-        );
-      }
-    },
 
     // 'pre' so the placeholder is resolved before Vite's own %ENV% pass sees it.
     transformIndexHtml: {

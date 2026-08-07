@@ -1,7 +1,8 @@
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
-  "name": "the-stack",
+  "name": "steady-hand",
   "compatibility_date": "2026-08-06",
+
   // Static-asset-only Worker: the game is entirely client-side, so there is no
   // `main` entrypoint and no Worker invocation on a request. Cloudflare serves
   // ./dist straight from the edge.
@@ -9,6 +10,22 @@
     "directory": "./dist",
     "not_found_handling": "single-page-application"
   },
+
+  // Served from the custom domain only. Cloudflare provisions the DNS record
+  // and certificate for this hostname on deploy; orangely.xyz must already be a
+  // zone on the same account.
+  "routes": [
+    {
+      "pattern": "steady-hand.orangely.xyz",
+      "custom_domain": true
+    }
+  ],
+
+  // The canonical URL points at the custom domain, so keep the site off
+  // <name>.<subdomain>.workers.dev rather than serving the same pages from two
+  // origins. Flip to true if you want the workers.dev URL back for previewing.
+  "workers_dev": false,
+
   "observability": {
     "enabled": true
   }
