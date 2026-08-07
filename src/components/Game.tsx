@@ -5,6 +5,7 @@ import type { StickData } from '../utils/math';
 import { CONTAINER_SIZE, STICK_LENGTH, STICK_WIDTH, doSticksOverlap } from '../utils/math';
 import { playWoodClick, playErrorSound, playWinSound } from '../utils/audio';
 import { RefreshCcw, Heart, HeartCrack, Trophy } from 'lucide-react';
+import Logo from './Logo';
 
 const COLORS = [
   '#DDBB99',
@@ -242,9 +243,12 @@ export default function Game() {
 
       {/* Top Navigation / HUD */}
       <header className="p-6 md:p-12 flex justify-between items-start z-20 shrink-0 pointer-events-none">
-        <div className="space-y-1">
-          <h1 className="text-4xl tracking-tighter uppercase font-light">The Stack</h1>
-          <p className="text-xs uppercase tracking-[0.2em] font-sans opacity-60">Steady Hand / High Precision</p>
+        <div className="flex items-center gap-4">
+          <Logo className="w-11 h-11 md:w-14 md:h-14 shrink-0" />
+          <div className="space-y-1">
+            <h1 className="text-4xl tracking-tighter uppercase font-light">The Stack</h1>
+            <p className="text-xs uppercase tracking-[0.2em] font-sans opacity-60">Steady Hand / High Precision</p>
+          </div>
         </div>
         
         <div className="flex gap-6 md:gap-16 text-right">
