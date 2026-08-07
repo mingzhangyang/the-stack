@@ -20,6 +20,13 @@ const STICK_COUNT = 30;
 const MAX_LIVES = 3;
 const BEST_TIME_KEY = 'pickup_sticks_best_time';
 
+// Depth: every stick is pushed toward the viewer by its zIndex, which under
+// `perspective` magnifies it and pushes it away from centre. The board
+// therefore paints wider than CONTAINER_SIZE, and the fit has to allow for it.
+const PERSPECTIVE = 1200;
+const STICK_Z_STEP = 4;
+const DEPTH_GROWTH = PERSPECTIVE / (PERSPECTIVE - STICK_COUNT * STICK_Z_STEP);
+
 // localStorage throws when cookies are blocked or storage is full, and a
 // corrupted value must not surface as a NaN best time (which would render as
 // "NaN:NaN" and never compare true against a new record).
@@ -45,7 +52,6 @@ function writeBestTime(seconds: number) {
 export default function Game() {
   const [sticks, setSticks] = useState<StickData[]>([]);
   const [lives, setLives] = useState(MAX_LIVES);
-  const [score, setScore] = useState(0);
   const [gameOver, setGameOver] = useState(false);
   const [won, setWon] = useState(false);
   const [errorStickId, setErrorStickId] = useState<string | null>(null);
@@ -63,6 +69,16 @@ export default function Game() {
   const [currentTime, setCurrentTime] = useState<number>(0);
   const [bestTime, setBestTime] = useState<number | null>(() => readBestTime());
 
+  // Score is derived, never stored. A stick mid-exit-animation is still mounted
+  // and its onClick closure still holds the props from the render that removed
+  // it — with a separate score counter, clicking that ghost wrote a stale
+  // "score + 1" and the displayed score could jump backwards.
+  const score = sticks.reduce((n, s) => (s.removed ? n + 1 : n), 0);
+
+  // Authoritative stick list for event handlers, immune to those stale closures.
+  const sticksRef = useRef<StickData[]>(sticks);
+  sticksRef.current = sticks;
+
   const formatTime = (timeInSeconds: number) => {
     const minutes = Math.floor(timeInSeconds / 60);
     const seconds = Math.floor(timeInSeconds % 60);
@@ -77,9 +93,10 @@ export default function Game() {
     const obs = new ResizeObserver((entries) => {
        if (entries[0]) {
           const { width, height } = entries[0].contentRect;
-          // Fit the board inside the measured box. Scaling past 1:1 would push
-          // edge sticks outside the overflow-hidden root and clip them.
-          setScale(Math.min(width / CONTAINER_SIZE, height / CONTAINER_SIZE));
+          // Fit the painted board — CONTAINER_SIZE inflated by the perspective
+          // magnification — inside the measured box, so no stick is clipped.
+          const painted = CONTAINER_SIZE * DEPTH_GROWTH;
+          setScale(Math.min(width / painted, height / painted));
        }
     });
     if (containerRef.current) obs.observe(containerRef.current);
@@ -102,7 +119,6 @@ export default function Game() {
     }
     setSticks(newSticks);
     setLives(MAX_LIVES);
-    setScore(0);
     setGameOver(false);
     setWon(false);
     setErrorStickId(null);
@@ -114,6 +130,20 @@ export default function Game() {
   useEffect(() => {
     initGame();
   }, []);
+
+  // Winning follows from the derived score, so it cannot be triggered twice by
+  // a duplicate click the way an inline `newScore === STICK_COUNT` check could.
+  useEffect(() => {
+    if (score !== STICK_COUNT || won || sticks.length === 0) return;
+    setWon(true);
+    playWinSound();
+    const finalTime = Math.floor((Date.now() - (startTime ?? Date.now())) / 1000);
+    setCurrentTime(finalTime);
+    if (bestTime === null || finalTime < bestTime) {
+      setBestTime(finalTime);
+      writeBestTime(finalTime);
+    }
+  }, [score, won, sticks.length, startTime, bestTime]);
 
   useEffect(() => {
     let interval: ReturnType<typeof setInterval> | undefined;
@@ -176,7 +206,15 @@ export default function Game() {
   };
 
   const handleStickClick = (clickedStick: StickData) => {
-    if (gameOver || won || clickedStick.removed || isProcessing) return;
+    if (gameOver || won || isProcessing) return;
+
+    // Resolve against the ref, not the props captured at render time: a stick
+    // mid-exit-animation is still mounted and still carries removed === false,
+    // and the closure around it holds a stale `sticks` array in which already
+    // lifted sticks still look active — which produced phantom collisions.
+    const liveSticks = sticksRef.current;
+    const current = liveSticks.find(s => s.id === clickedStick.id);
+    if (!current || current.removed) return;
     if (is3DView && dragStartRef.current.dragged) {
       dragStartRef.current.dragged = false;
       return;
@@ -186,9 +224,9 @@ export default function Game() {
     }
 
     // A stick is blocked if any unremoved stick with a higher zIndex overlaps it
-    const activeSticks = sticks.filter(s => !s.removed);
-    const higherSticks = activeSticks.filter(s => s.zIndex > clickedStick.zIndex);
-    const overlappingSticks = higherSticks.filter(s => doSticksOverlap(clickedStick, s));
+    const activeSticks = liveSticks.filter(s => !s.removed);
+    const higherSticks = activeSticks.filter(s => s.zIndex > current.zIndex);
+    const overlappingSticks = higherSticks.filter(s => doSticksOverlap(current, s));
 
     if (overlappingSticks.length > 0) {
       // Error! Touched another stick
@@ -197,9 +235,9 @@ export default function Game() {
       setErrorStickId(clickedStick.id);
       setHighlightStickIds(overlappingSticks.map(s => s.id));
       
-      const newLives = lives - 1;
+      const newLives = Math.max(0, lives - 1);
       setLives(newLives);
-      
+
       if (newLives <= 0) {
         setTimeout(() => setGameOver(true), 800);
       }
@@ -211,22 +249,12 @@ export default function Game() {
         setIsProcessing(false);
       }, 800);
     } else {
-      // Success! Stick is cleanly removed
+      // Success! Stick is cleanly removed. Score and the win are derived from
+      // this state change, so there is nothing else to keep in sync here.
       playWoodClick();
-      setSticks(prev => prev.map(s => s.id === clickedStick.id ? { ...s, removed: true } : s));
-      const newScore = score + 1;
-      setScore(newScore);
-      
-      if (newScore === STICK_COUNT) {
-        setWon(true);
-        playWinSound();
-        const finalTime = Math.floor((Date.now() - (startTime || Date.now())) / 1000);
-        setCurrentTime(finalTime);
-        if (bestTime === null || finalTime < bestTime) {
-           setBestTime(finalTime);
-           writeBestTime(finalTime);
-        }
-      }
+      const next = liveSticks.map(s => (s.id === current.id ? { ...s, removed: true } : s));
+      sticksRef.current = next;
+      setSticks(next);
     }
   };
 
@@ -242,34 +270,37 @@ export default function Game() {
       </div>
 
       {/* Top Navigation / HUD */}
-      <header className="p-6 md:p-12 flex justify-between items-start z-20 shrink-0 pointer-events-none">
-        <div className="flex items-center gap-4">
-          <Logo className="w-11 h-11 md:w-14 md:h-14 shrink-0" />
-          <div className="space-y-1">
-            <h1 className="text-4xl tracking-tighter uppercase font-light">The Stack</h1>
-            <p className="text-xs uppercase tracking-[0.2em] font-sans opacity-60">Steady Hand / High Precision</p>
+      <header className="p-4 md:p-12 flex justify-between items-start gap-3 z-20 shrink-0 pointer-events-none">
+        <div className="flex items-center gap-2 md:gap-4 min-w-0">
+          <Logo className="w-8 h-8 md:w-14 md:h-14 shrink-0" />
+          <div className="space-y-1 min-w-0">
+            <h1 className="text-2xl md:text-4xl tracking-tighter uppercase font-light whitespace-nowrap">The Stack</h1>
+            <p className="text-xs uppercase tracking-[0.2em] font-sans opacity-60 hidden md:block">Steady Hand / High Precision</p>
           </div>
         </div>
-        
-        <div className="flex gap-6 md:gap-16 text-right">
+
+        <div className="flex gap-3 md:gap-16 text-right shrink-0">
           <div>
-            <p className="text-[10px] uppercase tracking-widest opacity-40 mb-1 font-sans">Time</p>
-            <p className="text-3xl font-light">{formatTime(currentTime)}</p>
+            <p className="text-[9px] md:text-[10px] uppercase tracking-widest opacity-40 mb-1 font-sans">Time</p>
+            <p className="text-xl md:text-3xl font-light">{formatTime(currentTime)}</p>
             {bestTime !== null && (
-              <p className="text-[10px] uppercase tracking-widest opacity-40 mt-1 font-sans">Best: {formatTime(bestTime)}</p>
+              <p className="text-[9px] md:text-[10px] uppercase tracking-widest opacity-40 mt-1 font-sans whitespace-nowrap">Best: {formatTime(bestTime)}</p>
             )}
           </div>
           <div>
-            <p className="text-[10px] uppercase tracking-widest opacity-40 mb-1 font-sans">Current Score</p>
-            <p className="text-3xl font-light">{score}</p>
+            <p className="text-[9px] md:text-[10px] uppercase tracking-widest opacity-40 mb-1 font-sans">
+              <span className="md:hidden">Score</span>
+              <span className="hidden md:inline">Current Score</span>
+            </p>
+            <p className="text-xl md:text-3xl font-light">{score}</p>
           </div>
           <div>
-            <p className="text-[10px] uppercase tracking-widest opacity-40 mb-1 font-sans">Lives</p>
-            <div className="flex gap-1 mt-1 justify-end h-[36px] items-center">
+            <p className="text-[9px] md:text-[10px] uppercase tracking-widest opacity-40 mb-1 font-sans">Lives</p>
+            <div className="flex gap-1 mt-1 justify-end h-[28px] md:h-[36px] items-center">
                {Array.from({ length: MAX_LIVES }).map((_, i) => (
-                 i < lives 
-                  ? <Heart key={i} className="w-5 h-5 fill-[#2D2926] text-[#2D2926]" />
-                  : <HeartCrack key={i} className="w-5 h-5 text-black/20" />
+                 i < lives
+                  ? <Heart key={i} className="w-4 h-4 md:w-5 md:h-5 fill-[#2D2926] text-[#2D2926]" />
+                  : <HeartCrack key={i} className="w-4 h-4 md:w-5 md:h-5 text-black/20" />
                ))}
             </div>
           </div>
@@ -280,7 +311,7 @@ export default function Game() {
       <main 
         className="flex-1 relative flex items-center justify-center min-h-0 w-full" 
         ref={containerRef} 
-        style={{ perspective: '1200px', cursor: is3DView ? (isDragging ? 'grabbing' : 'grab') : 'default' }}
+        style={{ perspective: `${PERSPECTIVE}px`, cursor: is3DView ? (isDragging ? 'grabbing' : 'grab') : 'default' }}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
@@ -289,10 +320,13 @@ export default function Game() {
         {/* The 'Table' Shadows */}
         <div className="absolute w-96 h-96 bg-black/5 rounded-full blur-3xl pointer-events-none"></div>
 
-        <div 
-          className="relative z-10"
-          style={{ 
-            width: CONTAINER_SIZE, 
+        <div
+          // shrink-0 is load-bearing: as a flex child this box would otherwise be
+          // squeezed below CONTAINER_SIZE on narrow screens, while the absolutely
+          // positioned sticks kept their 600px coordinates and overflowed.
+          className="relative z-10 shrink-0"
+          style={{
+            width: CONTAINER_SIZE,
             height: CONTAINER_SIZE,
             transform: `scale(${scale}) ${is3DView ? `rotateX(${rotation.x}deg) rotateZ(${rotation.z}deg)` : 'rotateX(0deg) rotateZ(0deg)'}`,
             transformStyle: 'preserve-3d',
@@ -412,7 +446,7 @@ function Stick({ stick, isError, isHighlighted, onClick, disabled }: {
         left: stick.x, 
         top: stick.y, 
         zIndex: stick.zIndex,
-        transform: `translateZ(${stick.zIndex * 4}px)`,
+        transform: `translateZ(${stick.zIndex * STICK_Z_STEP}px)`,
         transformStyle: 'preserve-3d',
         transition: 'transform 0.8s cubic-bezier(0.4, 0, 0.2, 1)'
       }}
@@ -430,10 +464,13 @@ function Stick({ stick, isError, isHighlighted, onClick, disabled }: {
             ? 'brightness(0.8) sepia(1) hue-rotate(-50deg) saturate(5) drop-shadow(0 0 12px rgba(220,38,38,0.8))' 
             : 'drop-shadow(0 10px 15px rgba(0,0,0,0.1))'
         }}
-        exit={{ 
-          scale: 1.2, 
-          opacity: 0, 
-          y: -100, 
+        exit={{
+          scale: 1.2,
+          opacity: 0,
+          y: -100,
+          // A stick flying off the board must not intercept clicks aimed at the
+          // sticks it uncovered.
+          pointerEvents: 'none',
           transition: { duration: 0.4, ease: 'easeOut' }
         }}
         transition={{ 
