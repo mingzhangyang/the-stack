@@ -1,6 +1,8 @@
-import React, { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
+import type { PointerEvent as ReactPointerEvent } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { StickData, CONTAINER_SIZE, STICK_LENGTH, STICK_WIDTH, doSticksOverlap } from '../utils/math';
+import type { StickData } from '../utils/math';
+import { CONTAINER_SIZE, STICK_LENGTH, STICK_WIDTH, doSticksOverlap } from '../utils/math';
 import { playWoodClick, playErrorSound, playWinSound } from '../utils/audio';
 import { RefreshCcw, Heart, HeartCrack, Trophy } from 'lucide-react';
 
@@ -15,6 +17,29 @@ const COLORS = [
 
 const STICK_COUNT = 30;
 const MAX_LIVES = 3;
+const BEST_TIME_KEY = 'pickup_sticks_best_time';
+
+// localStorage throws when cookies are blocked or storage is full, and a
+// corrupted value must not surface as a NaN best time (which would render as
+// "NaN:NaN" and never compare true against a new record).
+function readBestTime(): number | null {
+  try {
+    const saved = localStorage.getItem(BEST_TIME_KEY);
+    if (saved === null) return null;
+    const parsed = Number.parseInt(saved, 10);
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeBestTime(seconds: number) {
+  try {
+    localStorage.setItem(BEST_TIME_KEY, seconds.toString());
+  } catch {
+    // Persisting the record is best-effort; the game continues either way.
+  }
+}
 
 export default function Game() {
   const [sticks, setSticks] = useState<StickData[]>([]);
@@ -29,13 +54,13 @@ export default function Game() {
   const [rotation, setRotation] = useState({ x: 55, z: 35 });
   const [isDragging, setIsDragging] = useState(false);
   const dragStartRef = useRef({ x: 0, y: 0, rotX: 0, rotZ: 0, dragged: false });
+  // The element that captured the pointer, so we can release the same one on
+  // pointerup even after the pointer has moved off it.
+  const pointerCaptureRef = useRef<{ el: HTMLElement; pointerId: number } | null>(null);
 
   const [startTime, setStartTime] = useState<number | null>(null);
   const [currentTime, setCurrentTime] = useState<number>(0);
-  const [bestTime, setBestTime] = useState<number | null>(() => {
-    const saved = localStorage.getItem('pickup_sticks_best_time');
-    return saved ? parseInt(saved, 10) : null;
-  });
+  const [bestTime, setBestTime] = useState<number | null>(() => readBestTime());
 
   const formatTime = (timeInSeconds: number) => {
     const minutes = Math.floor(timeInSeconds / 60);
@@ -51,8 +76,9 @@ export default function Game() {
     const obs = new ResizeObserver((entries) => {
        if (entries[0]) {
           const { width, height } = entries[0].contentRect;
-          const minScale = Math.min(width / CONTAINER_SIZE, height / CONTAINER_SIZE);
-          setScale(minScale * 1.2); // Increased scale to make sticks larger
+          // Fit the board inside the measured box. Scaling past 1:1 would push
+          // edge sticks outside the overflow-hidden root and clip them.
+          setScale(Math.min(width / CONTAINER_SIZE, height / CONTAINER_SIZE));
        }
     });
     if (containerRef.current) obs.observe(containerRef.current);
@@ -89,16 +115,18 @@ export default function Game() {
   }, []);
 
   useEffect(() => {
-    let interval: ReturnType<typeof setInterval>;
+    let interval: ReturnType<typeof setInterval> | undefined;
     if (startTime && !gameOver && !won) {
       interval = setInterval(() => {
         setCurrentTime(Math.floor((Date.now() - startTime) / 1000));
       }, 200);
     }
-    return () => clearInterval(interval);
+    return () => {
+      if (interval) clearInterval(interval);
+    };
   }, [startTime, gameOver, won]);
 
-  const handlePointerDown = (e: React.PointerEvent) => {
+  const handlePointerDown = (e: ReactPointerEvent) => {
     if (!is3DView) return;
     setIsDragging(true);
     dragStartRef.current = {
@@ -108,10 +136,18 @@ export default function Game() {
       rotZ: rotation.z,
       dragged: false
     };
-    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+    // Capture on the event target rather than the container: capturing an
+    // ancestor would retarget the following click and break stick selection.
+    const el = e.target as HTMLElement;
+    try {
+      el.setPointerCapture(e.pointerId);
+      pointerCaptureRef.current = { el, pointerId: e.pointerId };
+    } catch {
+      pointerCaptureRef.current = null;
+    }
   };
 
-  const handlePointerMove = (e: React.PointerEvent) => {
+  const handlePointerMove = (e: ReactPointerEvent) => {
     if (!isDragging || !is3DView) return;
     const dx = e.clientX - dragStartRef.current.x;
     const dy = e.clientY - dragStartRef.current.y;
@@ -126,12 +162,16 @@ export default function Game() {
     });
   };
 
-  const handlePointerUp = (e: React.PointerEvent) => {
-    if (!isDragging) return;
+  const handlePointerUp = () => {
     setIsDragging(false);
+    const capture = pointerCaptureRef.current;
+    if (!capture) return;
+    pointerCaptureRef.current = null;
     try {
-      (e.target as HTMLElement).releasePointerCapture(e.pointerId);
-    } catch (err) {}
+      capture.el.releasePointerCapture(capture.pointerId);
+    } catch {
+      // The element may already have lost capture (e.g. it was unmounted).
+    }
   };
 
   const handleStickClick = (clickedStick: StickData) => {
@@ -183,7 +223,7 @@ export default function Game() {
         setCurrentTime(finalTime);
         if (bestTime === null || finalTime < bestTime) {
            setBestTime(finalTime);
-           localStorage.setItem('pickup_sticks_best_time', finalTime.toString());
+           writeBestTime(finalTime);
         }
       }
     }
@@ -320,7 +360,7 @@ export default function Game() {
         </div>
         
         <div className="flex items-center gap-8 w-full md:w-auto justify-between md:justify-end">
-          <div className="flex -space-x-2 hidden sm:flex">
+          <div className="hidden sm:flex -space-x-2">
             {COLORS.slice(0, 4).map((c, i) => (
               <div key={i} className="w-8 h-8 rounded-full border-2 border-[#F2F0E9]" style={{ backgroundColor: c }}></div>
             ))}
@@ -359,7 +399,6 @@ function Stick({ stick, isError, isHighlighted, onClick, disabled }: {
   isHighlighted: boolean;
   onClick: () => void;
   disabled: boolean;
-  key?: string | number;
 }) {
   return (
     // Wrapper positions the element precisely at (x, y) with zIndex.

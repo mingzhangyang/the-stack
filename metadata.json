@@ -1,6 +1,0 @@
-{
-  "name": "Pick-up Sticks",
-  "description": "A digital recreation of the classic Pick-up Sticks game.",
-  "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
-}
