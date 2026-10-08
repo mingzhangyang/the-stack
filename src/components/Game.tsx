@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import type { StickData } from '../utils/math';
 import { CONTAINER_SIZE, STICK_LENGTH, STICK_WIDTH, doSticksOverlap } from '../utils/math';
 import { playWoodClick, playErrorSound, playWinSound } from '../utils/audio';
+import { track } from '../utils/analytics';
 import { RefreshCcw, Heart, HeartCrack, Trophy } from 'lucide-react';
 import Logo from './Logo';
 
@@ -144,6 +145,24 @@ export default function Game() {
       writeBestTime(finalTime);
     }
   }, [score, won, sticks.length, startTime, bestTime]);
+
+  // Play stats: the run starts on the first stick touched (startTime set) and
+  // finishes on a win or on losing the last life. initGame clears startTime,
+  // which re-arms both for the next run.
+  const statsFinishedRef = useRef(false);
+  useEffect(() => {
+    if (startTime === null) {
+      statsFinishedRef.current = false;
+      return;
+    }
+    track('play');
+  }, [startTime]);
+  useEffect(() => {
+    if ((won || gameOver) && startTime !== null && !statsFinishedRef.current) {
+      statsFinishedRef.current = true;
+      track('finish');
+    }
+  }, [won, gameOver, startTime]);
 
   useEffect(() => {
     let interval: ReturnType<typeof setInterval> | undefined;
