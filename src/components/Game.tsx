@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import type { StickData } from '../utils/math';
 import { CONTAINER_SIZE, STICK_LENGTH, STICK_WIDTH, doSticksOverlap } from '../utils/math';
 import { playWoodClick, playErrorSound, playWinSound } from '../utils/audio';
-import { track } from '../utils/analytics';
+import { initAnalytics, track } from '../utils/analytics';
 import { RefreshCcw, Heart, HeartCrack, Trophy } from 'lucide-react';
 import Logo from './Logo';
 
@@ -145,6 +145,12 @@ export default function Game() {
       writeBestTime(finalTime);
     }
   }, [score, won, sticks.length, startTime, bestTime]);
+
+  // The shared timer reads a live ref: only a started, unfinished pick-up
+  // run counts as actual play. Camera movement and unopened boards do not.
+  const playingRef = useRef(false);
+  playingRef.current = startTime !== null && !gameOver && !won;
+  useEffect(() => { initAnalytics(() => playingRef.current); }, []);
 
   // Play stats: the run starts on the first stick touched (startTime set) and
   // finishes on a win or on losing the last life. initGame clears startTime,

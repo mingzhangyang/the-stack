@@ -11,7 +11,8 @@
     "lint": "tsc --noEmit",
     "cf:dev": "wrangler dev",
     "cf:preview": "npm run build && wrangler dev",
-    "deploy": "npm run build && wrangler deploy"
+    "deploy": "npm run build && wrangler deploy",
+    "test:analytics": "node --test tests/analytics.test.mjs"
   },
   "dependencies": {
     "lucide-react": "^0.546.0",
