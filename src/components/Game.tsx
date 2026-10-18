@@ -149,7 +149,7 @@ export default function Game() {
   // The shared timer reads a live ref: only a started, unfinished pick-up
   // run counts as actual play. Camera movement and unopened boards do not.
   const playingRef = useRef(false);
-  playingRef.current = startTime !== null && !gameOver && !won;
+  playingRef.current = startTime !== null && !gameOver && !won && !isDragging;
   useEffect(() => { initAnalytics(() => playingRef.current); }, []);
 
   // Play stats: the run starts on the first stick touched (startTime set) and

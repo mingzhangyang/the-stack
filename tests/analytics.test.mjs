@@ -77,3 +77,16 @@ test('queued play events are bounded before shared script loads', () => {
   b.ready();
   assert.equal(b.sent.length, 16);
 });
+
+test('game lifecycle excludes active camera drag from playing time', () => {
+  const source = readFileSync(new URL('../src/components/Game.tsx', import.meta.url), 'utf8');
+  assert.match(source, /playingRef\.current = startTime !== null && !gameOver && !won && !isDragging;/);
+  // Camera drag and run lifecycle are orthogonal; a begun but unfinished run
+  // must pause only while the pointer gesture is active, then resume afterward.
+  const isPlaying = ({ started, ended, dragging }) => started && !ended && !dragging;
+  assert.equal(isPlaying({ started: false, ended: false, dragging: false }), false);
+  assert.equal(isPlaying({ started: true, ended: false, dragging: false }), true);
+  assert.equal(isPlaying({ started: true, ended: false, dragging: true }), false);
+  assert.equal(isPlaying({ started: true, ended: false, dragging: false }), true);
+  assert.equal(isPlaying({ started: true, ended: true, dragging: false }), false);
+});
